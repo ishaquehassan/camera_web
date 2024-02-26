@@ -45,6 +45,14 @@ class CameraService {
 
     try {
       final Map<String, dynamic> constraints = options.toJson();
+      constraints['audio'] = {
+        "sampleRate": 32050,  // Lower sample rate
+        "channelCount": 1,     // Mono channel
+        "sampleSize": 16,      // 16-bit samples
+        "echoCancellation": true,
+        "noiseSuppression": true,
+        "autoGainControl": true
+      };
       return await mediaDevices.getUserMedia(constraints);
     } on html.DomException catch (e) {
       switch (e.name) {
