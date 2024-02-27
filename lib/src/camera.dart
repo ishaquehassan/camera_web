@@ -448,6 +448,8 @@ class Camera {
     mediaRecorder ??=
         html.MediaRecorder(videoElement.srcObject!, <String, Object>{
       'mimeType': _videoMimeType,
+      'videoBitsPerSecond' : 100000, // 100 Kbps'
+      'audioBitsPerSecond': 64000 // 128 Kbps
     });
 
     _videoAvailableCompleter = Completer<XFile>();
@@ -608,7 +610,7 @@ class Camera {
   String get _videoMimeType {
     const List<String> types = <String>[
       'video/mp4',
-      'video/webm',
+      'video/webm;codecs=vp9,opus',
     ];
 
     return types.firstWhere(
