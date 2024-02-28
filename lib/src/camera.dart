@@ -448,7 +448,7 @@ class Camera {
     mediaRecorder ??=
         html.MediaRecorder(videoElement.srcObject!, <String, Object>{
       'mimeType': _videoMimeType,
-      'videoBitsPerSecond' : 100000, // 100 Kbps'
+      'videoBitsPerSecond' : 0,
       'audioBitsPerSecond': 64000 // 128 Kbps
     });
 
