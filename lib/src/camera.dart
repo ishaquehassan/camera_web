@@ -610,7 +610,7 @@ class Camera {
   String get _videoMimeType {
     const List<String> types = <String>[
       'video/mp4;codecs=avc1',
-      'video/webm;codecs=h246',
+      'video/webm;codecs=vp9,opus',
     ];
 
     return types.firstWhere(
