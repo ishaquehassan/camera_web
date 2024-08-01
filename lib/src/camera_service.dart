@@ -29,9 +29,9 @@ class CameraService {
   /// Returns a media stream associated with the camera device
   /// with [cameraId] and constrained by [options].
   Future<html.MediaStream> getMediaStreamForOptions(
-    CameraOptions options, {
-    int cameraId = 0,
-  }) async {
+      CameraOptions options, {
+        int cameraId = 0,
+      }) async {
     final html.MediaDevices? mediaDevices = window?.navigator.mediaDevices;
 
     // Throw a not supported exception if the current browser window
@@ -61,7 +61,7 @@ class CameraService {
             cameraId,
             CameraErrorCode.notReadable,
             'The camera is not readable due to a hardware error '
-            'that prevented access to the device.',
+                'that prevented access to the device.',
           );
         case 'OverconstrainedError':
         case 'ConstraintNotSatisfiedError':
@@ -76,14 +76,14 @@ class CameraService {
             cameraId,
             CameraErrorCode.permissionDenied,
             'The camera cannot be used or the permission '
-            'to access the camera is not granted.',
+                'to access the camera is not granted.',
           );
         case 'TypeError':
           throw CameraWebException(
             cameraId,
             CameraErrorCode.type,
             'The camera options are incorrect or attempted '
-            'to access the media input from an insecure context.',
+                'to access the media input from an insecure context.',
           );
         case 'AbortError':
           throw CameraWebException(
@@ -101,14 +101,14 @@ class CameraService {
           throw CameraWebException(
             cameraId,
             CameraErrorCode.unknown,
-            'An unknown error occured when fetching the camera stream.',
+            'An unknown error occurred when fetching the camera stream.',
           );
       }
     } catch (_) {
       throw CameraWebException(
         cameraId,
         CameraErrorCode.unknown,
-        'An unknown error occured when fetching the camera stream.',
+        'An unknown error occurred when fetching the camera stream.',
       );
     }
   }
@@ -118,11 +118,11 @@ class CameraService {
   /// Throws a [CameraWebException] if the zoom level is not supported
   /// or the camera has not been initialized or started.
   ZoomLevelCapability getZoomLevelCapabilityForCamera(
-    Camera camera,
-  ) {
+      Camera camera,
+      ) {
     final html.MediaDevices? mediaDevices = window?.navigator.mediaDevices;
     final Map<dynamic, dynamic>? supportedConstraints =
-        mediaDevices?.getSupportedConstraints();
+    mediaDevices?.getSupportedConstraints();
     final bool zoomLevelSupported =
         supportedConstraints?[ZoomLevelCapability.constraintName] as bool? ??
             false;
@@ -144,17 +144,17 @@ class CameraService {
       /// The zoom level capability is represented by MediaSettingsRange.
       /// See: https://developer.mozilla.org/en-US/docs/Web/API/MediaSettingsRange
       final Object zoomLevelCapability = defaultVideoTrack
-                  .getCapabilities()[ZoomLevelCapability.constraintName]
-              as Object? ??
+          .getCapabilities()[ZoomLevelCapability.constraintName]
+      as Object? ??
           <dynamic, dynamic>{};
 
       // The zoom level capability is a nested JS object, therefore
       // we need to access its properties with the js_util library.
       // See: https://api.dart.dev/stable/2.13.4/dart-js_util/getProperty.html
       final num? minimumZoomLevel =
-          jsUtil.getProperty(zoomLevelCapability, 'min') as num?;
+      jsUtil.getProperty(zoomLevelCapability, 'min') as num?;
       final num? maximumZoomLevel =
-          jsUtil.getProperty(zoomLevelCapability, 'max') as num?;
+      jsUtil.getProperty(zoomLevelCapability, 'max') as num?;
 
       if (minimumZoomLevel != null && maximumZoomLevel != null) {
         return ZoomLevelCapability(
@@ -194,7 +194,7 @@ class CameraService {
 
     // Check if the camera facing mode is supported by the current browser.
     final Map<dynamic, dynamic> supportedConstraints =
-        mediaDevices.getSupportedConstraints();
+    mediaDevices.getSupportedConstraints();
     final bool facingModeSupported =
         supportedConstraints[_facingModeKey] as bool? ?? false;
 
@@ -224,18 +224,18 @@ class CameraService {
       // The method may not be supported on Firefox.
       // See: https://developer.mozilla.org/en-US/docs/Web/API/MediaStreamTrack/getCapabilities#browser_compatibility
       if (!jsUtil.hasProperty(videoTrack, 'getCapabilities')) {
-        // Return null if the video track capabilites are not supported.
+        // Return null if the video track capabilities are not supported.
         return null;
       }
 
       final Map<dynamic, dynamic> videoTrackCapabilities =
-          videoTrack.getCapabilities();
+      videoTrack.getCapabilities();
 
       // A list of facing mode capabilities as
       // the camera may support multiple facing modes.
       final List<String> facingModeCapabilities = List<String>.from(
           (videoTrackCapabilities[_facingModeKey] as List<dynamic>?)
-                  ?.cast<String>() ??
+              ?.cast<String>() ??
               <String>[]);
 
       if (facingModeCapabilities.isNotEmpty) {
@@ -284,10 +284,9 @@ class CameraService {
   }
 
   /// Maps the given [resolutionPreset] to [Size].
-  Size? mapResolutionPresetToSize(ResolutionPreset resolutionPreset) {
+  Size mapResolutionPresetToSize(ResolutionPreset resolutionPreset) {
     switch (resolutionPreset) {
       case ResolutionPreset.max:
-        return null;
       case ResolutionPreset.ultraHigh:
         return const Size(4096, 2160);
       case ResolutionPreset.veryHigh:
@@ -308,10 +307,63 @@ class CameraService {
     return const Size(320, 240);
   }
 
+  static const int _kiloBits = 1000;
+  static const int _megaBits = _kiloBits * _kiloBits;
+
+  /// Maps the given [resolutionPreset] to video bitrate.
+  int mapResolutionPresetToVideoBitrate(ResolutionPreset resolutionPreset) {
+    switch (resolutionPreset) {
+      case ResolutionPreset.max:
+      case ResolutionPreset.ultraHigh:
+        return 8 * _megaBits;
+      case ResolutionPreset.veryHigh:
+        return 4 * _megaBits;
+      case ResolutionPreset.high:
+        return 1 * _megaBits;
+      case ResolutionPreset.medium:
+        return 400 * _kiloBits;
+      case ResolutionPreset.low:
+        return 200 * _kiloBits;
+    }
+
+    // The enum comes from a different package, which could get a new value at
+    // any time, so provide a fallback that ensures this won't break when used
+    // with a version that contains new values. This is deliberately outside
+    // the switch rather than a `default` so that the linter will flag the
+    // switch as needing an update.
+    // ignore: dead_code
+    return 1 * _megaBits;
+  }
+
+  /// Maps the given [resolutionPreset] to audio bitrate.
+  int mapResolutionPresetToAudioBitrate(ResolutionPreset resolutionPreset) {
+    switch (resolutionPreset) {
+      case ResolutionPreset.max:
+      case ResolutionPreset.ultraHigh:
+        return 128 * _kiloBits;
+      case ResolutionPreset.veryHigh:
+        return 128 * _kiloBits;
+      case ResolutionPreset.high:
+        return 64 * _kiloBits;
+      case ResolutionPreset.medium:
+        return 48 * _kiloBits;
+      case ResolutionPreset.low:
+        return 32 * _kiloBits;
+    }
+
+    // The enum comes from a different package, which could get a new value at
+    // any time, so provide a fallback that ensures this won't break when used
+    // with a version that contains new values. This is deliberately outside
+    // the switch rather than a `default` so that the linter will flag the
+    // switch as needing an update.
+    // ignore: dead_code
+    return 64 * _kiloBits;
+  }
+
   /// Maps the given [deviceOrientation] to [OrientationType].
   String mapDeviceOrientationToOrientationType(
-    DeviceOrientation deviceOrientation,
-  ) {
+      DeviceOrientation deviceOrientation,
+      ) {
     switch (deviceOrientation) {
       case DeviceOrientation.portraitUp:
         return OrientationType.portraitPrimary;
@@ -326,8 +378,8 @@ class CameraService {
 
   /// Maps the given [orientationType] to [DeviceOrientation].
   DeviceOrientation mapOrientationTypeToDeviceOrientation(
-    String orientationType,
-  ) {
+      String orientationType,
+      ) {
     switch (orientationType) {
       case OrientationType.portraitPrimary:
         return DeviceOrientation.portraitUp;

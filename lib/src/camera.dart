@@ -45,6 +45,7 @@ class Camera {
     required this.textureId,
     required CameraService cameraService,
     this.options = const CameraOptions(),
+    this.recorderOptions = const (audioBitrate: null, videoBitrate: null),
   }) : _cameraService = cameraService;
 
   // A torch mode constraint name.
@@ -56,6 +57,9 @@ class Camera {
 
   /// The camera options used to initialize a camera, empty by default.
   final CameraOptions options;
+
+  /// The options used to initialize a MediaRecorder.
+  final ({int? audioBitrate, int? videoBitrate}) recorderOptions;
 
   /// The video element that displays the camera stream.
   /// Initialized in [initialize].
@@ -83,7 +87,7 @@ class Camera {
   /// The stream controller for the [onEnded] stream.
   @visibleForTesting
   final StreamController<html.MediaStreamTrack> onEndedController =
-      StreamController<html.MediaStreamTrack>.broadcast();
+  StreamController<html.MediaStreamTrack>.broadcast();
 
   StreamSubscription<html.Event>? _onEndedSubscription;
 
@@ -100,7 +104,7 @@ class Camera {
   /// The stream controller for the [onVideoRecordingError] stream.
   @visibleForTesting
   final StreamController<html.ErrorEvent> videoRecordingErrorController =
-      StreamController<html.ErrorEvent>.broadcast();
+  StreamController<html.ErrorEvent>.broadcast();
 
   StreamSubscription<html.Event>? _onVideoRecordingErrorSubscription;
 
@@ -151,7 +155,7 @@ class Camera {
   /// The stream controller for the [onVideoRecordedEvent] stream.
   @visibleForTesting
   final StreamController<VideoRecordedEvent> videoRecorderController =
-      StreamController<VideoRecordedEvent>.broadcast();
+  StreamController<VideoRecordedEvent>.broadcast();
 
   /// Initializes the camera stream displayed in the [videoElement].
   /// Registers the camera view with [textureId] under [_getViewType] type.
@@ -170,7 +174,7 @@ class Camera {
 
     ui_web.platformViewRegistry.registerViewFactory(
       _getViewType(textureId),
-      (_) => divElement,
+          (_) => divElement,
     );
 
     videoElement
@@ -243,7 +247,7 @@ class Camera {
     final int videoWidth = videoElement.videoWidth;
     final int videoHeight = videoElement.videoHeight;
     final html.CanvasElement canvas =
-        html.CanvasElement(width: videoWidth, height: videoHeight);
+    html.CanvasElement(width: videoWidth, height: videoHeight);
     final bool isBackCamera = getLensDirection() == CameraLensDirection.back;
 
     // Flip the picture horizontally if it is not taken from a back camera.
@@ -279,7 +283,7 @@ class Camera {
 
     final html.MediaStreamTrack defaultVideoTrack = videoTracks.first;
     final Map<dynamic, dynamic> defaultVideoTrackSettings =
-        defaultVideoTrack.getSettings();
+    defaultVideoTrack.getSettings();
 
     final double? width = defaultVideoTrackSettings['width'] as double?;
     final double? height = defaultVideoTrackSettings['height'] as double?;
@@ -305,7 +309,7 @@ class Camera {
   void setFlashMode(FlashMode mode) {
     final html.MediaDevices? mediaDevices = window?.navigator.mediaDevices;
     final Map<dynamic, dynamic>? supportedConstraints =
-        mediaDevices?.getSupportedConstraints();
+    mediaDevices?.getSupportedConstraints();
     final bool torchModeSupported =
         supportedConstraints?[_torchModeKey] as bool? ?? false;
 
@@ -382,7 +386,7 @@ class Camera {
   /// not supported or the camera has not been initialized or started.
   void setZoomLevel(double zoom) {
     final ZoomLevelCapability zoomLevelCapability =
-        _cameraService.getZoomLevelCapabilityForCamera(this);
+    _cameraService.getZoomLevelCapabilityForCamera(this);
 
     if (zoom < zoomLevelCapability.minimum ||
         zoom > zoomLevelCapability.maximum) {
@@ -416,10 +420,10 @@ class Camera {
 
     final html.MediaStreamTrack defaultVideoTrack = videoTracks.first;
     final Map<dynamic, dynamic> defaultVideoTrackSettings =
-        defaultVideoTrack.getSettings();
+    defaultVideoTrack.getSettings();
 
     final String? facingMode =
-        defaultVideoTrackSettings['facingMode'] as String?;
+    defaultVideoTrackSettings['facingMode'] as String?;
 
     if (facingMode != null) {
       return _cameraService.mapFacingModeToLensDirection(facingMode);
@@ -433,32 +437,25 @@ class Camera {
 
   /// Starts a new video recording using [html.MediaRecorder].
   ///
-  /// Throws a [CameraWebException] if the provided maximum video duration is invalid
-  /// or the browser does not support any of the available video mime types
-  /// from [_videoMimeType].
-  Future<void> startVideoRecording({Duration? maxVideoDuration}) async {
-    if (maxVideoDuration != null && maxVideoDuration.inMilliseconds <= 0) {
-      throw CameraWebException(
-        textureId,
-        CameraErrorCode.notSupported,
-        'The maximum video duration must be greater than 0 milliseconds.',
-      );
-    }
-
+  /// Throws a [CameraWebException] if the browser does not support any of the
+  /// available video mime types from [_videoMimeType].
+  Future<void> startVideoRecording() async {
     mediaRecorder ??=
         html.MediaRecorder(videoElement.srcObject!, <String, Object>{
-      'mimeType': _videoMimeType,
-      'videoBitsPerSecond' : 0,
-      'audioBitsPerSecond': 64000 // 128 Kbps
-    });
+          'mimeType': _videoMimeType,
+          if (recorderOptions.audioBitrate != null)
+            'audioBitsPerSecond': recorderOptions.audioBitrate!,
+          if (recorderOptions.videoBitrate != null)
+            'videoBitsPerSecond': recorderOptions.videoBitrate!,
+        });
 
     _videoAvailableCompleter = Completer<XFile>();
 
     _videoDataAvailableListener =
-        (html.Event event) => _onVideoDataAvailable(event, maxVideoDuration);
+        (html.Event event) => _onVideoDataAvailable(event);
 
     _videoRecordingStoppedListener =
-        (html.Event event) => _onVideoRecordingStopped(event, maxVideoDuration);
+        (html.Event event) => _onVideoRecordingStopped(event);
 
     mediaRecorder!.addEventListener(
       'dataavailable',
@@ -472,40 +469,23 @@ class Camera {
 
     _onVideoRecordingErrorSubscription =
         mediaRecorder!.onError.listen((html.Event event) {
-      final html.ErrorEvent error = event as html.ErrorEvent;
-      videoRecordingErrorController.add(error);
-    });
+          final html.ErrorEvent error = event as html.ErrorEvent;
+          videoRecordingErrorController.add(error);
+        });
 
-    if (maxVideoDuration != null) {
-      mediaRecorder!.start(maxVideoDuration.inMilliseconds);
-    } else {
-      // Don't pass the null duration as that will fire a `dataavailable` event directly.
-      mediaRecorder!.start();
-    }
+    mediaRecorder!.start();
   }
 
-  void _onVideoDataAvailable(
-    html.Event event, [
-    Duration? maxVideoDuration,
-  ]) {
+  void _onVideoDataAvailable(html.Event event) {
     final html.Blob? blob = (event as html.BlobEvent).data;
 
     // Append the recorded part of the video to the list of all video data files.
     if (blob != null) {
       _videoData.add(blob);
     }
-
-    // Stop the recorder if the video has a maxVideoDuration
-    // and the recording was not stopped manually.
-    if (maxVideoDuration != null && mediaRecorder!.state == 'recording') {
-      mediaRecorder!.stop();
-    }
   }
 
-  Future<void> _onVideoRecordingStopped(
-    html.Event event, [
-    Duration? maxVideoDuration,
-  ]) async {
+  Future<void> _onVideoRecordingStopped(html.Event event) async {
     if (_videoData.isNotEmpty) {
       // Concatenate all video data files into a single blob.
       final String videoType = _videoData.first.type;
@@ -520,7 +500,7 @@ class Camera {
 
       // Emit an event containing the recorded video file.
       videoRecorderController.add(
-        VideoRecordedEvent(textureId, file, maxVideoDuration),
+        VideoRecordedEvent(textureId, file, null),
       );
 
       _videoAvailableCompleter?.complete(file);
@@ -614,7 +594,7 @@ class Camera {
     ];
 
     return types.firstWhere(
-      (String type) => isVideoTypeSupported(type),
+          (String type) => isVideoTypeSupported(type),
       orElse: () => throw CameraWebException(
         textureId,
         CameraErrorCode.notSupported,
