@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 import 'dart:async';
-import 'dart:html' as html;
+import 'dart:js_interop';
 import 'dart:math';
 
 import 'package:camera_platform_interface/camera_platform_interface.dart';
@@ -11,9 +11,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_web_plugins/flutter_web_plugins.dart';
 import 'package:stream_transform/stream_transform.dart';
+import 'package:web/web.dart' as web;
 
 import 'camera.dart';
 import 'camera_service.dart';
+import 'pkg_web_tweaks.dart';
 import 'types/types.dart';
 
 // The default error message, when the error is an empty string.
@@ -48,7 +50,7 @@ class CameraPlugin extends CameraPlatform {
   /// Populated in [availableCameras].
   @visibleForTesting
   final Map<CameraDescription, CameraMetadata> camerasMetadata =
-  <CameraDescription, CameraMetadata>{};
+      <CameraDescription, CameraMetadata>{};
 
   /// The controller used to broadcast different camera events.
   ///
@@ -56,88 +58,96 @@ class CameraPlugin extends CameraPlatform {
   /// to different stream views of this controller.
   @visibleForTesting
   final StreamController<CameraEvent> cameraEventStreamController =
-  StreamController<CameraEvent>.broadcast();
+      StreamController<CameraEvent>.broadcast();
 
-  final Map<int, StreamSubscription<html.Event>>
-  _cameraVideoErrorSubscriptions = <int, StreamSubscription<html.Event>>{};
+  /// The stream provider for [web.HTMLVideoElement] error events.
+  @visibleForTesting
+  web.EventStreamProvider<web.Event> videoElementOnErrorProvider =
+      web.EventStreamProviders.errorElementEvent;
 
-  final Map<int, StreamSubscription<html.Event>>
-  _cameraVideoAbortSubscriptions = <int, StreamSubscription<html.Event>>{};
+  final Map<int, StreamSubscription<web.Event>> _cameraVideoErrorSubscriptions =
+      <int, StreamSubscription<web.Event>>{};
 
-  final Map<int, StreamSubscription<html.MediaStreamTrack>>
-  _cameraEndedSubscriptions =
-  <int, StreamSubscription<html.MediaStreamTrack>>{};
+  /// The stream provider for [web.HTMLVideoElement] abort events.
+  @visibleForTesting
+  web.EventStreamProvider<web.Event> videoElementOnAbortProvider =
+      web.EventStreamProviders.errorElementEvent;
 
-  final Map<int, StreamSubscription<html.ErrorEvent>>
-  _cameraVideoRecordingErrorSubscriptions =
-  <int, StreamSubscription<html.ErrorEvent>>{};
+  final Map<int, StreamSubscription<web.Event>> _cameraVideoAbortSubscriptions =
+      <int, StreamSubscription<web.Event>>{};
+
+  final Map<int, StreamSubscription<web.MediaStreamTrack>>
+      _cameraEndedSubscriptions =
+      <int, StreamSubscription<web.MediaStreamTrack>>{};
+
+  final Map<int, StreamSubscription<web.ErrorEvent>>
+      _cameraVideoRecordingErrorSubscriptions =
+      <int, StreamSubscription<web.ErrorEvent>>{};
 
   /// Returns a stream of camera events for the given [cameraId].
   Stream<CameraEvent> _cameraEvents(int cameraId) =>
       cameraEventStreamController.stream
           .where((CameraEvent event) => event.cameraId == cameraId);
 
+  /// The stream provider for [web.ScreenOrientation] change events.
+  @visibleForTesting
+  web.EventStreamProvider<web.Event> orientationOnChangeProvider =
+      web.EventStreamProviders.changeEvent;
+
   /// The current browser window used to access media devices.
   @visibleForTesting
-  html.Window? window = html.window;
+  web.Window window = web.window;
 
   @override
   Future<List<CameraDescription>> availableCameras() async {
     try {
-      final html.MediaDevices? mediaDevices = window?.navigator.mediaDevices;
+      final web.MediaDevices mediaDevices = window.navigator.mediaDevices;
       final List<CameraDescription> cameras = <CameraDescription>[];
 
-      // Throw a not supported exception if the current browser window
-      // does not support any media devices.
-      if (mediaDevices == null) {
-        throw PlatformException(
-          code: CameraErrorCode.notSupported.toString(),
-          message: 'The camera is not supported on this device.',
-        );
-      }
-
       // Request video permissions only.
-      final html.MediaStream cameraStream =
-      await _cameraService.getMediaStreamForOptions(const CameraOptions());
+      final web.MediaStream cameraStream =
+          await _cameraService.getMediaStreamForOptions(const CameraOptions());
 
       // Release the camera stream used to request video permissions.
       cameraStream
           .getVideoTracks()
-          .forEach((html.MediaStreamTrack videoTrack) => videoTrack.stop());
+          .toDart
+          .forEach((web.MediaStreamTrack videoTrack) => videoTrack.stop());
 
       // Request available media devices.
-      final List<dynamic> devices = await mediaDevices.enumerateDevices();
+      final List<web.MediaDeviceInfo> devices =
+          (await mediaDevices.enumerateDevices().toDart).toDart;
 
       // Filter video input devices.
-      final Iterable<html.MediaDeviceInfo> videoInputDevices = devices
-          .whereType<html.MediaDeviceInfo>()
-          .where((html.MediaDeviceInfo device) =>
-      device.kind == MediaDeviceKind.videoInput)
-
-      /// The device id property is currently not supported on Internet Explorer:
-      /// https://developer.mozilla.org/en-US/docs/Web/API/MediaDeviceInfo/deviceId#browser_compatibility
+      final Iterable<web.MediaDeviceInfo> videoInputDevices = devices
           .where(
-            (html.MediaDeviceInfo device) =>
-        device.deviceId != null && device.deviceId!.isNotEmpty,
-      );
+            (web.MediaDeviceInfo device) =>
+                device.kind == MediaDeviceKind.videoInput,
+          )
+
+          /// The device id property is currently not supported on Internet Explorer:
+          /// https://developer.mozilla.org/en-US/docs/Web/API/MediaDeviceInfo/deviceId#browser_compatibility
+          .where((web.MediaDeviceInfo device) => device.deviceId.isNotEmpty);
 
       // Map video input devices to camera descriptions.
-      for (final html.MediaDeviceInfo videoInputDevice in videoInputDevices) {
+      for (final web.MediaDeviceInfo videoInputDevice in videoInputDevices) {
         // Get the video stream for the current video input device
         // to later use for the available video tracks.
-        final html.MediaStream videoStream = await _getVideoStreamForDevice(
-          videoInputDevice.deviceId!,
-        );
+        final web.MediaStream videoStream =
+            await _getVideoStreamForDevice(videoInputDevice.deviceId);
 
         // Get all video tracks in the video stream
         // to later extract the lens direction from the first track.
-        final List<html.MediaStreamTrack> videoTracks =
-        videoStream.getVideoTracks();
+        final List<web.MediaStreamTrack> videoTracks =
+            videoStream.getVideoTracks().toDart;
 
         if (videoTracks.isNotEmpty) {
           // Get the facing mode from the first available video track.
-          final String? facingMode =
-          _cameraService.getFacingModeForVideoTrack(videoTracks.first);
+          String? facingMode = null;
+          try{
+            facingMode =
+            _cameraService.getFacingModeForVideoTrack(videoTracks.first);
+          }catch(e){}
 
           // Get the lens direction based on the facing mode.
           // Fallback to the external lens direction
@@ -155,15 +165,14 @@ class CameraPlugin extends CameraPlatform {
           // https://developer.mozilla.org/en-US/docs/Web/API/MediaDeviceInfo/label
           //
           // Sensor orientation is currently not supported.
-          final String cameraLabel = videoInputDevice.label ?? '';
           final CameraDescription camera = CameraDescription(
-            name: cameraLabel,
+            name: videoInputDevice.label,
             lensDirection: lensDirection,
             sensorOrientation: 0,
           );
 
           final CameraMetadata cameraMetadata = CameraMetadata(
-            deviceId: videoInputDevice.deviceId!,
+            deviceId: videoInputDevice.deviceId,
             facingMode: facingMode,
           );
 
@@ -172,7 +181,7 @@ class CameraPlugin extends CameraPlatform {
           camerasMetadata[camera] = cameraMetadata;
 
           // Release the camera stream of the current video input device.
-          for (final html.MediaStreamTrack videoTrack in videoTracks) {
+          for (final web.MediaStreamTrack videoTrack in videoTracks) {
             videoTrack.stop();
           }
         } else {
@@ -180,9 +189,8 @@ class CameraPlugin extends CameraPlatform {
           continue;
         }
       }
-
       return cameras;
-    } on html.DomException catch (e) {
+    } on web.DOMException catch (e) {
       throw CameraException(e.name, e.message);
     } on PlatformException catch (e) {
       throw CameraException(e.code, e.message);
@@ -194,10 +202,10 @@ class CameraPlugin extends CameraPlatform {
 
   @override
   Future<int> createCamera(
-      CameraDescription cameraDescription,
-      ResolutionPreset? resolutionPreset, {
-        bool enableAudio = false,
-      }) =>
+    CameraDescription cameraDescription,
+    ResolutionPreset? resolutionPreset, {
+    bool enableAudio = false,
+  }) =>
       createCameraWithSettings(
           cameraDescription,
           MediaSettings(
@@ -207,15 +215,15 @@ class CameraPlugin extends CameraPlatform {
 
   @override
   Future<int> createCameraWithSettings(
-      CameraDescription cameraDescription,
-      MediaSettings? mediaSettings,
-      ) async {
+    CameraDescription cameraDescription,
+    MediaSettings? mediaSettings,
+  ) async {
     try {
       if (!camerasMetadata.containsKey(cameraDescription)) {
         throw PlatformException(
           code: CameraErrorCode.missingMetadata.toString(),
           message:
-          'Missing camera metadata. Make sure to call `availableCameras` before creating a camera.',
+              'Missing camera metadata. Make sure to call `availableCameras` before creating a camera.',
         );
       }
 
@@ -241,7 +249,7 @@ class CameraPlugin extends CameraPlatform {
           audio: AudioConstraints(enabled: mediaSettings?.enableAudio ?? true),
           video: VideoConstraints(
             facingMode:
-            cameraType != null ? FacingModeConstraint(cameraType) : null,
+                cameraType != null ? FacingModeConstraint(cameraType) : null,
             width: VideoSizeConstraint(
               ideal: videoSize.width.toInt(),
             ),
@@ -252,8 +260,8 @@ class CameraPlugin extends CameraPlatform {
           ),
         ),
         recorderOptions: (
-        audioBitrate: mediaSettings?.audioBitrate,
-        videoBitrate: mediaSettings?.videoBitrate,
+          audioBitrate: mediaSettings?.audioBitrate,
+          videoBitrate: mediaSettings?.videoBitrate,
         ),
       );
 
@@ -267,10 +275,10 @@ class CameraPlugin extends CameraPlatform {
 
   @override
   Future<void> initializeCamera(
-      int cameraId, {
-        // The image format group is currently not supported.
-        ImageFormatGroup imageFormatGroup = ImageFormatGroup.unknown,
-      }) async {
+    int cameraId, {
+    // The image format group is currently not supported.
+    ImageFormatGroup imageFormatGroup = ImageFormatGroup.unknown,
+  }) async {
     try {
       final Camera camera = getCamera(cameraId);
 
@@ -278,46 +286,48 @@ class CameraPlugin extends CameraPlatform {
 
       // Add camera's video error events to the camera events stream.
       // The error event fires when the video element's source has failed to load, or can't be used.
-      _cameraVideoErrorSubscriptions[cameraId] =
-          camera.videoElement.onError.listen((html.Event _) {
-            // The Event itself (_) doesn't contain information about the actual error.
-            // We need to look at the HTMLMediaElement.error.
-            // See: https://developer.mozilla.org/en-US/docs/Web/API/HTMLMediaElement/error
-            final html.MediaError error = camera.videoElement.error!;
-            final CameraErrorCode errorCode = CameraErrorCode.fromMediaError(error);
-            final String? errorMessage =
+      _cameraVideoErrorSubscriptions[cameraId] = videoElementOnErrorProvider
+          .forElement(camera.videoElement)
+          .listen((web.Event _) {
+        // The Event itself (_) doesn't contain information about the actual error.
+        // We need to look at the HTMLMediaElement.error.
+        // See: https://developer.mozilla.org/en-US/docs/Web/API/HTMLMediaElement/error
+        final web.MediaError error = camera.videoElement.error!;
+        final CameraErrorCode errorCode = CameraErrorCode.fromMediaError(error);
+        final String errorMessage =
             error.message != '' ? error.message : _kDefaultErrorMessage;
 
-            cameraEventStreamController.add(
-              CameraErrorEvent(
-                cameraId,
-                'Error code: $errorCode, error message: $errorMessage',
-              ),
-            );
-          });
+        cameraEventStreamController.add(
+          CameraErrorEvent(
+            cameraId,
+            'Error code: $errorCode, error message: $errorMessage',
+          ),
+        );
+      });
 
       // Add camera's video abort events to the camera events stream.
       // The abort event fires when the video element's source has not fully loaded.
-      _cameraVideoAbortSubscriptions[cameraId] =
-          camera.videoElement.onAbort.listen((html.Event _) {
-            cameraEventStreamController.add(
-              CameraErrorEvent(
-                cameraId,
-                "Error code: ${CameraErrorCode.abort}, error message: The video element's source has not fully loaded.",
-              ),
-            );
-          });
+      _cameraVideoAbortSubscriptions[cameraId] = videoElementOnAbortProvider
+          .forElement(camera.videoElement)
+          .listen((web.Event _) {
+        cameraEventStreamController.add(
+          CameraErrorEvent(
+            cameraId,
+            "Error code: ${CameraErrorCode.abort}, error message: The video element's source has not fully loaded.",
+          ),
+        );
+      });
 
       await camera.play();
 
       // Add camera's closing events to the camera events stream.
       // The onEnded stream fires when there is no more camera stream data.
       _cameraEndedSubscriptions[cameraId] =
-          camera.onEnded.listen((html.MediaStreamTrack _) {
-            cameraEventStreamController.add(
-              CameraClosingEvent(cameraId),
-            );
-          });
+          camera.onEnded.listen((web.MediaStreamTrack _) {
+        cameraEventStreamController.add(
+          CameraClosingEvent(cameraId),
+        );
+      });
 
       final Size cameraSize = camera.getVideoSize();
 
@@ -334,7 +344,7 @@ class CameraPlugin extends CameraPlatform {
           false,
         ),
       );
-    } on html.DomException catch (e) {
+    } on web.DOMException catch (e) {
       throw PlatformException(code: e.name, message: e.message);
     } on CameraWebException catch (e) {
       _addCameraErrorEvent(e);
@@ -374,53 +384,51 @@ class CameraPlugin extends CameraPlatform {
 
   @override
   Stream<DeviceOrientationChangedEvent> onDeviceOrientationChanged() {
-    final html.ScreenOrientation? orientation = window?.screen?.orientation;
+    final web.ScreenOrientation orientation = window.screen.orientation;
 
-    if (orientation != null) {
-      // Create an initial orientation event that emits the device orientation
-      // as soon as subscribed to this stream.
-      final html.Event initialOrientationEvent = html.Event('change');
+    // Create an initial orientation event that emits the device orientation
+    // as soon as subscribed to this stream.
+    final web.Event initialOrientationEvent = web.Event('change');
 
-      return orientation.onChange.startWith(initialOrientationEvent).map(
-            (html.Event _) {
-          final DeviceOrientation deviceOrientation = _cameraService
-              .mapOrientationTypeToDeviceOrientation(orientation.type!);
-          return DeviceOrientationChangedEvent(deviceOrientation);
-        },
-      );
-    } else {
-      return const Stream<DeviceOrientationChangedEvent>.empty();
-    }
+    return orientationOnChangeProvider
+        .forTarget(orientation)
+        .startWith(initialOrientationEvent)
+        .map(
+      (web.Event _) {
+        final DeviceOrientation deviceOrientation = _cameraService
+            .mapOrientationTypeToDeviceOrientation(orientation.type);
+        return DeviceOrientationChangedEvent(deviceOrientation);
+      },
+    );
   }
 
   @override
   Future<void> lockCaptureOrientation(
-      int cameraId,
-      DeviceOrientation orientation,
-      ) async {
+    int cameraId,
+    DeviceOrientation orientation,
+  ) async {
     try {
-      final html.ScreenOrientation? screenOrientation =
-          window?.screen?.orientation;
-      final html.Element? documentElement = window?.document.documentElement;
+      final web.ScreenOrientation screenOrientation = window.screen.orientation;
+      final web.Element? documentElement = window.document.documentElement;
 
-      if (screenOrientation != null && documentElement != null) {
+      if (documentElement != null) {
         final String orientationType =
-        _cameraService.mapDeviceOrientationToOrientationType(orientation);
+            _cameraService.mapDeviceOrientationToOrientationType(orientation);
 
         // Full-screen mode may be required to modify the device orientation.
         // See: https://w3c.github.io/screen-orientation/#interaction-with-fullscreen-api
         // Recent versions of Dart changed requestFullscreen to return a Future instead of void.
         // This wrapper allows use of both the old and new APIs.
-        dynamic fullScreen() => documentElement.requestFullscreen();
+        dynamic fullScreen() => documentElement.requestFullScreenTweak();
         await fullScreen();
-        await screenOrientation.lock(orientationType);
+        await screenOrientation.lock(orientationType).toDart;
       } else {
         throw PlatformException(
           code: CameraErrorCode.orientationNotSupported.toString(),
           message: 'Orientation is not supported in the current browser.',
         );
       }
-    } on html.DomException catch (e) {
+    } on web.DOMException catch (e) {
       throw PlatformException(code: e.name, message: e.message);
     }
   }
@@ -428,10 +436,10 @@ class CameraPlugin extends CameraPlatform {
   @override
   Future<void> unlockCaptureOrientation(int cameraId) async {
     try {
-      final html.ScreenOrientation? orientation = window?.screen?.orientation;
-      final html.Element? documentElement = window?.document.documentElement;
+      final web.ScreenOrientation orientation = window.screen.orientation;
+      final web.Element? documentElement = window.document.documentElement;
 
-      if (orientation != null && documentElement != null) {
+      if (documentElement != null) {
         orientation.unlock();
       } else {
         throw PlatformException(
@@ -439,7 +447,7 @@ class CameraPlugin extends CameraPlatform {
           message: 'Orientation is not supported in the current browser.',
         );
       }
-    } on html.DomException catch (e) {
+    } on web.DOMException catch (e) {
       throw PlatformException(code: e.name, message: e.message);
     }
   }
@@ -448,7 +456,7 @@ class CameraPlugin extends CameraPlatform {
   Future<XFile> takePicture(int cameraId) {
     try {
       return getCamera(cameraId).takePicture();
-    } on html.DomException catch (e) {
+    } on web.DOMException catch (e) {
       throw PlatformException(code: e.name, message: e.message);
     } on CameraWebException catch (e) {
       _addCameraErrorEvent(e);
@@ -480,17 +488,17 @@ class CameraPlugin extends CameraPlatform {
       // The error event fires when the video recording is not allowed or an unsupported
       // codec is used.
       _cameraVideoRecordingErrorSubscriptions[options.cameraId] =
-          camera.onVideoRecordingError.listen((html.ErrorEvent errorEvent) {
-            cameraEventStreamController.add(
-              CameraErrorEvent(
-                options.cameraId,
-                'Error code: ${errorEvent.type}, error message: ${errorEvent.message}.',
-              ),
-            );
-          });
+          camera.onVideoRecordingError.listen((web.ErrorEvent errorEvent) {
+        cameraEventStreamController.add(
+          CameraErrorEvent(
+            options.cameraId,
+            'Error code: ${errorEvent.type}, error message: ${errorEvent.message}.',
+          ),
+        );
+      });
 
       return camera.startVideoRecording();
-    } on html.DomException catch (e) {
+    } on web.DOMException catch (e) {
       throw PlatformException(code: e.name, message: e.message);
     } on CameraWebException catch (e) {
       _addCameraErrorEvent(e);
@@ -502,10 +510,10 @@ class CameraPlugin extends CameraPlatform {
   Future<XFile> stopVideoRecording(int cameraId) async {
     try {
       final XFile videoRecording =
-      await getCamera(cameraId).stopVideoRecording();
+          await getCamera(cameraId).stopVideoRecording();
       await _cameraVideoRecordingErrorSubscriptions[cameraId]?.cancel();
       return videoRecording;
-    } on html.DomException catch (e) {
+    } on web.DOMException catch (e) {
       throw PlatformException(code: e.name, message: e.message);
     } on CameraWebException catch (e) {
       _addCameraErrorEvent(e);
@@ -517,7 +525,7 @@ class CameraPlugin extends CameraPlatform {
   Future<void> pauseVideoRecording(int cameraId) {
     try {
       return getCamera(cameraId).pauseVideoRecording();
-    } on html.DomException catch (e) {
+    } on web.DOMException catch (e) {
       throw PlatformException(code: e.name, message: e.message);
     } on CameraWebException catch (e) {
       _addCameraErrorEvent(e);
@@ -529,7 +537,7 @@ class CameraPlugin extends CameraPlatform {
   Future<void> resumeVideoRecording(int cameraId) {
     try {
       return getCamera(cameraId).resumeVideoRecording();
-    } on html.DomException catch (e) {
+    } on web.DOMException catch (e) {
       throw PlatformException(code: e.name, message: e.message);
     } on CameraWebException catch (e) {
       _addCameraErrorEvent(e);
@@ -541,7 +549,7 @@ class CameraPlugin extends CameraPlatform {
   Future<void> setFlashMode(int cameraId, FlashMode mode) async {
     try {
       getCamera(cameraId).setFlashMode(mode);
-    } on html.DomException catch (e) {
+    } on web.DOMException catch (e) {
       throw PlatformException(code: e.name, message: e.message);
     } on CameraWebException catch (e) {
       _addCameraErrorEvent(e);
@@ -593,7 +601,7 @@ class CameraPlugin extends CameraPlatform {
   Future<double> getMaxZoomLevel(int cameraId) async {
     try {
       return getCamera(cameraId).getMaxZoomLevel();
-    } on html.DomException catch (e) {
+    } on web.DOMException catch (e) {
       throw PlatformException(code: e.name, message: e.message);
     } on CameraWebException catch (e) {
       _addCameraErrorEvent(e);
@@ -605,7 +613,7 @@ class CameraPlugin extends CameraPlatform {
   Future<double> getMinZoomLevel(int cameraId) async {
     try {
       return getCamera(cameraId).getMinZoomLevel();
-    } on html.DomException catch (e) {
+    } on web.DOMException catch (e) {
       throw PlatformException(code: e.name, message: e.message);
     } on CameraWebException catch (e) {
       _addCameraErrorEvent(e);
@@ -617,7 +625,7 @@ class CameraPlugin extends CameraPlatform {
   Future<void> setZoomLevel(int cameraId, double zoom) async {
     try {
       getCamera(cameraId).setZoomLevel(zoom);
-    } on html.DomException catch (e) {
+    } on web.DOMException catch (e) {
       throw CameraException(e.name, e.message);
     } on PlatformException catch (e) {
       throw CameraException(e.code, e.message);
@@ -631,7 +639,7 @@ class CameraPlugin extends CameraPlatform {
   Future<void> pausePreview(int cameraId) async {
     try {
       getCamera(cameraId).pause();
-    } on html.DomException catch (e) {
+    } on web.DOMException catch (e) {
       throw PlatformException(code: e.name, message: e.message);
     }
   }
@@ -640,7 +648,7 @@ class CameraPlugin extends CameraPlatform {
   Future<void> resumePreview(int cameraId) async {
     try {
       await getCamera(cameraId).play();
-    } on html.DomException catch (e) {
+    } on web.DOMException catch (e) {
       throw PlatformException(code: e.name, message: e.message);
     } on CameraWebException catch (e) {
       _addCameraErrorEvent(e);
@@ -661,6 +669,7 @@ class CameraPlugin extends CameraPlatform {
       await getCamera(cameraId).dispose();
       await _cameraVideoErrorSubscriptions[cameraId]?.cancel();
       await _cameraVideoAbortSubscriptions[cameraId]?.cancel();
+
       await _cameraEndedSubscriptions[cameraId]?.cancel();
       await _cameraVideoRecordingErrorSubscriptions[cameraId]?.cancel();
 
@@ -668,15 +677,15 @@ class CameraPlugin extends CameraPlatform {
       _cameraVideoErrorSubscriptions.remove(cameraId);
       _cameraVideoAbortSubscriptions.remove(cameraId);
       _cameraEndedSubscriptions.remove(cameraId);
-    } on html.DomException catch (e) {
+    } on web.DOMException catch (e) {
       throw PlatformException(code: e.name, message: e.message);
     }
   }
 
   /// Returns a media video stream for the device with the given [deviceId].
-  Future<html.MediaStream> _getVideoStreamForDevice(
-      String deviceId,
-      ) {
+  Future<web.MediaStream> _getVideoStreamForDevice(
+    String deviceId,
+  ) {
     // Create camera options with the desired device id.
     final CameraOptions cameraOptions = CameraOptions(
       video: VideoConstraints(deviceId: deviceId),
