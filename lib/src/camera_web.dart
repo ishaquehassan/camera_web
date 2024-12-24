@@ -143,11 +143,9 @@ class CameraPlugin extends CameraPlatform {
 
         if (videoTracks.isNotEmpty) {
           // Get the facing mode from the first available video track.
-          String? facingMode = null;
-          try{
-            facingMode =
-            _cameraService.getFacingModeForVideoTrack(videoTracks.first);
-          }catch(e){}
+          final String? facingMode =
+              _cameraService.getFacingModeForVideoTrack(videoTracks.first);
+
 
           // Get the lens direction based on the facing mode.
           // Fallback to the external lens direction
@@ -189,6 +187,7 @@ class CameraPlugin extends CameraPlatform {
           continue;
         }
       }
+
       return cameras;
     } on web.DOMException catch (e) {
       throw CameraException(e.name, e.message);

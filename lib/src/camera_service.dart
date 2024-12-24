@@ -163,7 +163,6 @@ class CameraService {
   /// (null if the facing mode is not available).
   String? getFacingModeForVideoTrack(web.MediaStreamTrack videoTrack) {
     final web.MediaDevices mediaDevices = window.navigator.mediaDevices;
-
     // Check if the camera facing mode is supported by the current browser.
     final web.MediaTrackSupportedConstraints supportedConstraints =
         mediaDevices.getSupportedConstraints();
@@ -203,10 +202,17 @@ class CameraService {
 
       // A list of facing mode capabilities as
       // the camera may support multiple facing modes.
-      final List<String> facingModeCapabilities = videoTrackCapabilities
-          .facingMode.toDart
-          .map((JSString e) => e.toDart)
-          .toList();
+      List<String> facingModeCapabilities = [];
+
+      try{
+        facingModeCapabilities = videoTrackCapabilities
+            .facingMode.toDart
+            .map((JSString e) => e.toDart)
+            .toList();
+      }catch(e){
+        print(e.toString());
+      }
+
 
       if (facingModeCapabilities.isNotEmpty) {
         final String facingModeCapability = facingModeCapabilities.first;
