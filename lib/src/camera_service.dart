@@ -132,27 +132,6 @@ class CameraService {
     if (videoTracks.isNotEmpty) {
       final web.MediaStreamTrack defaultVideoTrack = videoTracks.first;
 
-      // Create a JSArray for advanced constraints
-      final JSArray<web.MediaTrackConstraintSet> advancedConstraints = JSArray<web.MediaTrackConstraintSet>();
-
-      // Create constraint sets
-      final web.MediaTrackConstraintSet portraitConstraint = web.MediaTrackConstraintSet(
-          width: 1080.toJS,
-          height: 1920.toJS,
-          aspectRatio: (9/16).toJS // Portrait aspect ratio (taller than wide)
-      );
-
-      // Add the constraint set to the advanced array
-      advancedConstraints.add(portraitConstraint);
-
-      // Create the final constraints object
-      final web.MediaTrackConstraints constraints = web.MediaTrackConstraints(
-          advanced: advancedConstraints
-      );
-
-      // Apply the constraints to your video track
-      defaultVideoTrack.applyConstraints(constraints);
-
       /// The zoom level capability is represented by MediaSettingsRange.
       /// See: https://developer.mozilla.org/en-US/docs/Web/API/MediaSettingsRange
       final WebTweakMediaSettingsRange? zoomLevelCapability =
