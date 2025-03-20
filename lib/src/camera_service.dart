@@ -266,7 +266,7 @@ class CameraService {
       case ResolutionPreset.ultraHigh:
         return const Size(4096, 2160);
       case ResolutionPreset.veryHigh:
-        return const Size(1920, 1080);
+        return const Size(1080, 1920);
       case ResolutionPreset.high:
         return const Size(1280, 720);
       case ResolutionPreset.medium:
