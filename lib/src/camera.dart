@@ -601,6 +601,7 @@ class Camera {
   /// any of the available video mime types.
   String get _videoMimeType {
     const List<String> types = <String>[
+      'video/mp4; codecs="avc1.42E01E, mp4a.40.2"',
       'video/webm;codecs="vp9,opus"',
       'video/mp4',
       'video/webm',
