@@ -489,7 +489,7 @@ class Camera {
       videoRecordingErrorController.add(error);
     });
 
-    mediaRecorder!.start();
+    mediaRecorder!.start(1000);
   }
 
   void _onVideoDataAvailable(web.BlobEvent event) {
@@ -498,6 +498,12 @@ class Camera {
   }
 
   Future<void> _onVideoRecordingStopped(web.Event event) async {
+    // During recorder refresh, skip full cleanup — keep _videoData intact
+    // so chunks from the old recorder are preserved for the final blob.
+    if (_isRefreshingRecorder) {
+      return;
+    }
+
     if (_videoData.isNotEmpty) {
       // Concatenate all video data files into a single blob.
       final String videoType = _videoData.first.type;
@@ -547,14 +553,139 @@ class Camera {
     mediaRecorder!.pause();
   }
 
+  /// Whether the recorder is being refreshed with a fresh stream.
+  /// Used to prevent [_onVideoRecordingStopped] from doing full cleanup
+  /// while we stop the old recorder and start a new one.
+  bool _isRefreshingRecorder = false;
+
   /// Resumes the current video recording.
+  ///
+  /// If the video track has ended (e.g. iOS Safari kills camera on tab switch),
+  /// this will re-acquire the camera stream and restart the recorder while
+  /// preserving already-recorded data.
   ///
   /// Throws a [CameraWebException] if the video recorder is uninitialized.
   Future<void> resumeVideoRecording() async {
     if (mediaRecorder == null) {
       throw _videoRecordingNotStartedException;
     }
+
+    // Check if video track is dead (iOS Safari kills it on tab switch)
+    final List<web.MediaStreamTrack> videoTracks =
+        stream?.getVideoTracks().toDart ?? <web.MediaStreamTrack>[];
+    if (videoTracks.isNotEmpty && videoTracks.first.readyState == 'ended') {
+      await _restartRecorderWithFreshStream();
+      return;
+    }
+
     mediaRecorder!.resume();
+  }
+
+  /// Stops the current [mediaRecorder], re-acquires the camera stream,
+  /// and starts a new [mediaRecorder]. Already-recorded chunks in
+  /// [_videoData] are preserved so the final blob contains all data.
+  Future<void> _restartRecorderWithFreshStream() async {
+    _isRefreshingRecorder = true;
+
+    // Clean up old recorder's event listeners and subscriptions
+    // before stopping, so the JS wrappers don't leak.
+    final web.MediaRecorder oldRecorder = mediaRecorder!;
+    oldRecorder.removeEventListener(
+      'dataavailable',
+      _videoDataAvailableListener?.toJS,
+    );
+    oldRecorder.removeEventListener(
+      'stop',
+      _videoRecordingStoppedListener?.toJS,
+    );
+    await _onVideoRecordingErrorSubscription?.cancel();
+
+    // Manually request remaining data before stopping.
+    // This fires dataavailable synchronously with buffered chunks.
+    oldRecorder.requestData();
+    oldRecorder.stop();
+    await Future.delayed(const Duration(milliseconds: 200));
+
+    _isRefreshingRecorder = false;
+
+    // Get a fresh camera stream
+    final web.MediaStream newStream =
+        await _cameraService.getMediaStreamForOptions(
+      options,
+      cameraId: textureId,
+    );
+
+    // Replace dead video track(s)
+    for (final web.MediaStreamTrack track
+        in stream!.getVideoTracks().toDart) {
+      stream!.removeTrack(track);
+      track.stop();
+    }
+    for (final web.MediaStreamTrack track
+        in newStream.getVideoTracks().toDart) {
+      stream!.addTrack(track);
+    }
+
+    // Replace audio track if it also died
+    final List<web.MediaStreamTrack> oldAudioTracks =
+        stream!.getAudioTracks().toDart;
+    if (oldAudioTracks.isNotEmpty &&
+        oldAudioTracks.first.readyState == 'ended') {
+      for (final web.MediaStreamTrack track in oldAudioTracks) {
+        stream!.removeTrack(track);
+        track.stop();
+      }
+      for (final web.MediaStreamTrack track
+          in newStream.getAudioTracks().toDart) {
+        stream!.addTrack(track);
+      }
+    } else {
+      // Original audio still alive — stop new stream's audio to avoid duplication
+      for (final web.MediaStreamTrack track
+          in newStream.getAudioTracks().toDart) {
+        track.stop();
+      }
+    }
+
+    // Refresh the video element for live preview
+    videoElement.srcObject = stream;
+    await videoElement.play().toDart;
+
+    // Create new MediaRecorder with the refreshed stream
+    final web.MediaRecorderOptions recOptions =
+        web.MediaRecorderOptions(mimeType: _videoMimeType);
+    if (recorderOptions.audioBitrate != null) {
+      recOptions.audioBitsPerSecond = recorderOptions.audioBitrate!;
+    }
+    if (recorderOptions.videoBitrate != null) {
+      recOptions.videoBitsPerSecond = recorderOptions.videoBitrate!;
+    }
+
+    mediaRecorder = web.MediaRecorder(stream!, recOptions);
+
+    _videoDataAvailableListener =
+        (web.BlobEvent event) => _onVideoDataAvailable(event);
+    _videoRecordingStoppedListener =
+        (web.Event event) => _onVideoRecordingStopped(event);
+
+    mediaRecorder!.addEventListener(
+      'dataavailable',
+      _videoDataAvailableListener?.toJS,
+    );
+    mediaRecorder!.addEventListener(
+      'stop',
+      _videoRecordingStoppedListener?.toJS,
+    );
+
+    _onVideoRecordingErrorSubscription = mediaRecorderOnErrorProvider
+        .forTarget(mediaRecorder)
+        .listen((web.Event event) {
+      final web.ErrorEvent error = event as web.ErrorEvent;
+      videoRecordingErrorController.add(error);
+    });
+
+    // Start new recorder — chunks go into the same _videoData list
+    mediaRecorder!.start(1000);
   }
 
   /// Stops the video recording and returns the captured video file.
